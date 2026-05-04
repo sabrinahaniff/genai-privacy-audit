@@ -20,3 +20,24 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 device = torch.device("mps" if torch.backends.mps.is_available() 
                        else "cpu")
 print(f"Using device: {device}")
+
+# data loading
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,))
+])
+
+full_dataset = datasets.MNIST(root='./data', train=True,
+                               download=True, transform=transform)
+
+# split into member (training) and non-member (holdout) sets
+member_indices = list(range(TRAIN_SIZE))
+nonmember_indices = list(range(TRAIN_SIZE, TRAIN_SIZE * 2))
+
+member_dataset = Subset(full_dataset, member_indices)
+nonmember_dataset = Subset(full_dataset, nonmember_indices)
+
+train_loader = DataLoader(member_dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+print(f"Member samples: {len(member_dataset)}")
+print(f"Non-member samples: {len(nonmember_dataset)}")
