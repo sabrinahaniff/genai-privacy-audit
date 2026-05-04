@@ -109,17 +109,23 @@ for epoch in range(EPOCHS):
         real_labels = torch.ones(batch_size, 1).to(device)
         fake_labels = torch.zeros(batch_size, 1).to(device)
         
-        # train discriminator with dp
-        opt_d.zero_grad()
-        real_loss = criterion(discriminator(real_imgs), real_labels)
-        
-        z = torch.randn(batch_size, LATENT_DIM).to(device)
+        # train generator 
+        opt_g.zero_grad()
+        with torch.no_grad():
+            z = torch.randn(batch_size, LATENT_DIM).to(device)
         fake_imgs = generator(z)
-        fake_loss = criterion(discriminator(fake_imgs.detach()), fake_labels)
         
-        d_loss = real_loss + fake_loss
-        d_loss.backward()
-        opt_d.step()
+        # detach discriminator from dp graph for generator step
+        for param in discriminator.parameters():
+            param.requires_grad_(False)
+        
+        g_loss = criterion(discriminator(fake_imgs), real_labels)
+        g_loss.backward()
+        opt_g.step()
+        
+        # re-enable discriminator gradients
+        for param in discriminator.parameters():
+            param.requires_grad_(True)
         
         # train generator 
         opt_g.zero_grad()
