@@ -22,12 +22,14 @@ from 0.0290 to -0.0001.
 
 ## Project Structure
 
-├── train_gan.py              # Train baseline GAN on MNIST
-├── membership_inference.py   # Attack baseline GAN
-├── train_gan_dp.py           # Train GAN with DP-SGD defense
+```
+├── train_gan.py               # Train baseline GAN on MNIST
+├── membership_inference.py    # Attack baseline GAN
+├── train_gan_dp.py            # Train GAN with DP-SGD defense
 ├── membership_inference_dp.py # Attack DP-GAN
-├── compare_results.py        # Generate comparison figures
-└── outputs/                  # Saved models and figures
+├── compare_results.py         # Generate comparison figures
+└── outputs/                   # Saved models and figures
+```
 
 ## Setup
 
