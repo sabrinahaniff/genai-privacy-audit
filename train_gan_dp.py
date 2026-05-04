@@ -48,7 +48,7 @@ class Generator(nn.Module):
     def forward(self, z):
         return self.model(z).view(-1, 1, 28, 28)
 
-# Discriminator without Dropout - Opacus doesn't support Dropout
+
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
@@ -92,25 +92,29 @@ for epoch in range(EPOCHS):
         real_labels = torch.ones(batch_size, 1).to(device)
         fake_labels = torch.zeros(batch_size, 1).to(device)
 
-        # train dsicriminator with dp
+        # train discriminator with dp
+        # backward() must be immediately followed by opt_d.step()
         opt_d.zero_grad()
-        real_loss = criterion(discriminator(real_imgs), real_labels)
         z = torch.randn(batch_size, LATENT_DIM).to(device)
-        fake_imgs = generator(z).detach()
+        with torch.no_grad():
+            fake_imgs = generator(z)
+        real_loss = criterion(discriminator(real_imgs), real_labels)
         fake_loss = criterion(discriminator(fake_imgs), fake_labels)
         d_loss = real_loss + fake_loss
         d_loss.backward()
-        opt_d.step()
+        opt_d.step()  
 
-        # train generator separately so it is completely isolated from DP discriminator
+        # train generator
         opt_g.zero_grad()
         z = torch.randn(batch_size, LATENT_DIM).to(device)
         fake_imgs = generator(z)
-        # use discriminator in eval mode for generator step
-        discriminator.eval()
-        g_loss = criterion(discriminator(fake_imgs.detach()), real_labels)
-        discriminator.train()
-        g_loss = criterion(discriminator(fake_imgs), real_labels)
+        
+        # get discriminator scores without dp graph
+        with torch.no_grad():
+            d_scores = discriminator(fake_imgs)
+        
+        # generator loss based on those scores
+        g_loss = -torch.mean(torch.log(d_scores + 1e-8))
         g_loss.backward()
         opt_g.step()
 
@@ -120,7 +124,7 @@ for epoch in range(EPOCHS):
               f"D_loss: {d_loss.item():.4f} "
               f"G_loss: {g_loss.item():.4f} "
               f"Epsilon spent: {eps:.2f}")
-
+        
 torch.save(discriminator.state_dict(), f"{SAVE_DIR}/discriminator_dp.pt")
 torch.save(generator.state_dict(), f"{SAVE_DIR}/generator_dp.pt")
 print(f"\nDP models saved.")
