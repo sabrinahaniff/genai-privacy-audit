@@ -6,25 +6,20 @@ from torch.utils.data import DataLoader, Subset
 from opacus import PrivacyEngine
 import os
 
-# config 
 LATENT_DIM = 64
-BATCH_SIZE = 64
+BATCH_SIZE = 256  
 EPOCHS = 50
 LR = 0.0002
 TRAIN_SIZE = 5000
 SAVE_DIR = "outputs"
-
-# dp params
-EPSILON = 10.0       # privacy budget; lower = more private
-DELTA = 1e-5         # probability privacy guarantee breaks
-MAX_GRAD_NORM = 1.0  # clipping threshold
+EPSILON = 10.0
+DELTA = 1e-5
+MAX_GRAD_NORM = 1.0
 
 os.makedirs(SAVE_DIR, exist_ok=True)
-
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# data loading; identical split as before
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.5,), (0.5,))
@@ -32,12 +27,8 @@ transform = transforms.Compose([
 
 full_dataset = datasets.MNIST(root='./data', train=True,
                                download=True, transform=transform)
-
-member_indices = list(range(TRAIN_SIZE))
-member_dataset = Subset(full_dataset, member_indices)
-train_loader = DataLoader(member_dataset, batch_size=BATCH_SIZE, 
-                          shuffle=True)
-
+member_dataset = Subset(full_dataset, list(range(TRAIN_SIZE)))
+train_loader = DataLoader(member_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 class Generator(nn.Module):
     def __init__(self):
@@ -54,39 +45,33 @@ class Generator(nn.Module):
             nn.Linear(512, 784),
             nn.Tanh()
         )
-    
     def forward(self, z):
-        img = self.model(z)
-        return img.view(-1, 1, 28, 28)
+        return self.model(z).view(-1, 1, 28, 28)
 
+# Discriminator without Dropout - Opacus doesn't support Dropout
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
         self.model = nn.Sequential(
             nn.Linear(784, 512),
             nn.LeakyReLU(0.2),
-            nn.Dropout(0.3),
             nn.Linear(512, 256),
             nn.LeakyReLU(0.2),
-            nn.Dropout(0.3),
             nn.Linear(256, 1),
             nn.Sigmoid()
         )
-    
     def forward(self, img):
-        flat = img.view(-1, 784)
-        return self.model(flat)
+        return self.model(img.view(-1, 784))
 
-# initialize networks
 generator = Generator().to(device)
 discriminator = Discriminator().to(device)
+generator_ref = Generator().to(device)  # separate generator for g step
 
-# optimizers
 criterion = nn.BCELoss()
 opt_g = optim.Adam(generator.parameters(), lr=LR, betas=(0.5, 0.999))
 opt_d = optim.Adam(discriminator.parameters(), lr=LR, betas=(0.5, 0.999))
 
-# wrap discriminator with privacy engine
+# wrap only discriminator with DP
 privacy_engine = PrivacyEngine()
 discriminator, opt_d, train_loader = privacy_engine.make_private_with_epsilon(
     module=discriminator,
@@ -97,52 +82,46 @@ discriminator, opt_d, train_loader = privacy_engine.make_private_with_epsilon(
     target_delta=DELTA,
     max_grad_norm=MAX_GRAD_NORM,
 )
-print(f"DP enabled - Target epsilon: {EPSILON}, Delta: {DELTA}")
+print(f"DP enabled - Target epsilon: {EPSILON}")
 
-# training loop
 print("\nStarting DP-GAN training...")
 for epoch in range(EPOCHS):
     for real_imgs, _ in train_loader:
         real_imgs = real_imgs.to(device)
         batch_size = real_imgs.size(0)
-        
         real_labels = torch.ones(batch_size, 1).to(device)
         fake_labels = torch.zeros(batch_size, 1).to(device)
-        
-        # train generator 
-        opt_g.zero_grad()
-        with torch.no_grad():
-            z = torch.randn(batch_size, LATENT_DIM).to(device)
-        fake_imgs = generator(z)
-        
-        # detach discriminator from dp graph for generator step
-        for param in discriminator.parameters():
-            param.requires_grad_(False)
-        
-        g_loss = criterion(discriminator(fake_imgs), real_labels)
-        g_loss.backward()
-        opt_g.step()
-        
-        # re-enable discriminator gradients
-        for param in discriminator.parameters():
-            param.requires_grad_(True)
-        
-        # train generator 
+
+        # train dsicriminator with dp
+        opt_d.zero_grad()
+        real_loss = criterion(discriminator(real_imgs), real_labels)
+        z = torch.randn(batch_size, LATENT_DIM).to(device)
+        fake_imgs = generator(z).detach()
+        fake_loss = criterion(discriminator(fake_imgs), fake_labels)
+        d_loss = real_loss + fake_loss
+        d_loss.backward()
+        opt_d.step()
+
+        # train generator separately so it is completely isolated from DP discriminator
         opt_g.zero_grad()
         z = torch.randn(batch_size, LATENT_DIM).to(device)
         fake_imgs = generator(z)
+        # use discriminator in eval mode for generator step
+        discriminator.eval()
+        g_loss = criterion(discriminator(fake_imgs.detach()), real_labels)
+        discriminator.train()
         g_loss = criterion(discriminator(fake_imgs), real_labels)
         g_loss.backward()
         opt_g.step()
-    
-    if (epoch + 1) % 10 == 0:
-        epsilon = privacy_engine.get_epsilon(DELTA)
-        print(f"Epoch [{epoch+1}/{EPOCHS}] D_loss: {d_loss.item():.4f} "
-              f"G_loss: {g_loss.item():.4f} "
-              f"Epsilon spent: {epsilon:.2f}")
 
-# save dp models
+    if (epoch + 1) % 10 == 0:
+        eps = privacy_engine.get_epsilon(DELTA)
+        print(f"Epoch [{epoch+1}/{EPOCHS}] "
+              f"D_loss: {d_loss.item():.4f} "
+              f"G_loss: {g_loss.item():.4f} "
+              f"Epsilon spent: {eps:.2f}")
+
 torch.save(discriminator.state_dict(), f"{SAVE_DIR}/discriminator_dp.pt")
 torch.save(generator.state_dict(), f"{SAVE_DIR}/generator_dp.pt")
 print(f"\nDP models saved.")
-print(f"Final privacy budget spent: {privacy_engine.get_epsilon(DELTA):.2f}")
+print(f"Final epsilon: {privacy_engine.get_epsilon(DELTA):.2f}")
