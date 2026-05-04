@@ -6,8 +6,9 @@ from torch.utils.data import DataLoader, Subset
 from opacus import PrivacyEngine
 import os
 
+# config
 LATENT_DIM = 64
-BATCH_SIZE = 256  
+BATCH_SIZE = 256
 EPOCHS = 50
 LR = 0.0002
 TRAIN_SIZE = 5000
@@ -20,19 +21,20 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 print(f"Using device: {device}")
 
+# data
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.5,), (0.5,))
 ])
-
 full_dataset = datasets.MNIST(root='./data', train=True,
                                download=True, transform=transform)
 member_dataset = Subset(full_dataset, list(range(TRAIN_SIZE)))
 train_loader = DataLoader(member_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
+#networks
 class Generator(nn.Module):
     def __init__(self):
-        super(Generator, self).__init__()
+        super().__init__()
         self.model = nn.Sequential(
             nn.Linear(LATENT_DIM, 128),
             nn.LeakyReLU(0.2),
@@ -48,10 +50,9 @@ class Generator(nn.Module):
     def forward(self, z):
         return self.model(z).view(-1, 1, 28, 28)
 
-
 class Discriminator(nn.Module):
     def __init__(self):
-        super(Discriminator, self).__init__()
+        super().__init__()
         self.model = nn.Sequential(
             nn.Linear(784, 512),
             nn.LeakyReLU(0.2),
@@ -65,13 +66,12 @@ class Discriminator(nn.Module):
 
 generator = Generator().to(device)
 discriminator = Discriminator().to(device)
-generator_ref = Generator().to(device)  # separate generator for g step
 
 criterion = nn.BCELoss()
 opt_g = optim.Adam(generator.parameters(), lr=LR, betas=(0.5, 0.999))
 opt_d = optim.Adam(discriminator.parameters(), lr=LR, betas=(0.5, 0.999))
 
-# wrap only discriminator with DP
+# wrap discriminator with dp
 privacy_engine = PrivacyEngine()
 discriminator, opt_d, train_loader = privacy_engine.make_private_with_epsilon(
     module=discriminator,
@@ -92,40 +92,40 @@ for epoch in range(EPOCHS):
         real_labels = torch.ones(batch_size, 1).to(device)
         fake_labels = torch.zeros(batch_size, 1).to(device)
 
-        # train discriminator with dp
-        # backward() must be immediately followed by opt_d.step()
+        #discrimintator where dp applies
         opt_d.zero_grad()
-        z = torch.randn(batch_size, LATENT_DIM).to(device)
         with torch.no_grad():
-            fake_imgs = generator(z)
-        real_loss = criterion(discriminator(real_imgs), real_labels)
-        fake_loss = criterion(discriminator(fake_imgs), fake_labels)
-        d_loss = real_loss + fake_loss
+            z = torch.randn(batch_size, LATENT_DIM).to(device)
+            fake_imgs_d = generator(z)          # generator frozen
+        d_loss = (criterion(discriminator(real_imgs), real_labels) +
+                  criterion(discriminator(fake_imgs_d), fake_labels))
         d_loss.backward()
-        opt_d.step()  
+        opt_d.step()                            # must follow immediately
 
-        # train generator
+        # generator graph no dp
         opt_g.zero_grad()
         z = torch.randn(batch_size, LATENT_DIM).to(device)
-        fake_imgs = generator(z)
-        
-        # get discriminator scores without dp graph
-        with torch.no_grad():
-            d_scores = discriminator(fake_imgs)
-        
-        # generator loss based on those scores
-        g_loss = -torch.mean(torch.log(d_scores + 1e-8))
+        fake_imgs_g = generator(z)
+
+        # freeze discriminator weights
+        for p in discriminator.parameters():
+            p.requires_grad_(False)
+
+        g_loss = criterion(discriminator(fake_imgs_g), real_labels)
         g_loss.backward()
         opt_g.step()
 
+        # unfreeze for next discriminator step
+        for p in discriminator.parameters():
+            p.requires_grad_(True)
+
     if (epoch + 1) % 10 == 0:
         eps = privacy_engine.get_epsilon(DELTA)
-        print(f"Epoch [{epoch+1}/{EPOCHS}] "
-              f"D_loss: {d_loss.item():.4f} "
-              f"G_loss: {g_loss.item():.4f} "
-              f"Epsilon spent: {eps:.2f}")
-        
+        print(f"Epoch [{epoch+1}/{EPOCHS}]  "
+              f"D_loss: {d_loss.item():.4f}  "
+              f"G_loss: {g_loss.item():.4f}  "
+              f"ε spent: {eps:.2f}")
+
 torch.save(discriminator.state_dict(), f"{SAVE_DIR}/discriminator_dp.pt")
-torch.save(generator.state_dict(), f"{SAVE_DIR}/generator_dp.pt")
-print(f"\nDP models saved.")
-print(f"Final epsilon: {privacy_engine.get_epsilon(DELTA):.2f}")
+torch.save(generator.state_dict(),     f"{SAVE_DIR}/generator_dp.pt")
+print(f"\nDP models saved. Final ε = {privacy_engine.get_epsilon(DELTA):.2f}")
