@@ -41,3 +41,24 @@ train_loader = DataLoader(member_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 print(f"Member samples: {len(member_dataset)}")
 print(f"Non-member samples: {len(nonmember_dataset)}")
+
+# generator network
+class Generator(nn.Module):
+    def __init__(self):
+        super(Generator, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(LATENT_DIM, 128),
+            nn.LeakyReLU(0.2),
+            nn.Linear(128, 256),
+            nn.BatchNorm1d(256),
+            nn.LeakyReLU(0.2),
+            nn.Linear(256, 512),
+            nn.BatchNorm1d(512),
+            nn.LeakyReLU(0.2),
+            nn.Linear(512, 784),  # 28x28 = 784
+            nn.Tanh()
+        )
+    
+    def forward(self, z):
+        img = self.model(z)
+        return img.view(-1, 1, 28, 28)
