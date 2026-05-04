@@ -1,40 +1,57 @@
-# Privacy Audit: Membership Inference Attacks on Generative Models
+# GenAI Privacy Audit: Membership Inference Attacks on Generative Models
 
-## Abstract
+A research project auditing privacy leakage in GANs using membership inference 
+attacks, with Differential Privacy (DP-SGD) as a defense mechanism.
 
-This project demonstrates privacy vulnerabilities in generative models by performing 
-a membership inference attack on a GAN trained on MNIST. We show that an attacker 
-can exploit the discriminator's memorization of training data to distinguish members 
-from non-members with above-random accuracy. We then apply Differential Privacy via 
-DP-SGD as a defense and demonstrate that privacy leakage is reduced to essentially 
-zero, with attack accuracy dropping below random guessing.
+**Key Result:** DP reduced membership inference attack accuracy from 51.93% to 
+49.92% which is below random guessing while eliminating the privacy leakage gap 
+from 0.0290 to -0.0001.
 
 ---
 
-## 1. Introduction
+## Results
 
-### The Problem
+| Model | Member Confidence | Non-member Confidence | Gap | Attack Accuracy |
+|---|---|---|---|---|
+| GAN (no DP) | 0.7057 | 0.6767 | 0.0290 | 51.93% |
+| DP-GAN (ε=10) | 0.5227 | 0.5228 | -0.0001 | 49.92% |
 
-Modern generative models are trained on sensitive data. Medical records, location 
-traces, financial transactions, personal images — all are potential training inputs 
-for AI systems. But training creates a fundamental privacy risk: models memorize 
-their training data.
-
-This memorization enables **membership inference attacks** — where an adversary 
-queries a model to determine whether a specific individual's data was used in 
-training. Even without access to the training data itself, an attacker can exploit 
-the statistical gap between how a model responds to data it has seen versus data 
-it hasn't.
-
-This problem is not theoretical. In 2021, researchers demonstrated that GPT-2 
-could be prompted to reproduce verbatim training data including personal information. 
-The same fundamental vulnerability exists in all generative models — GANs, VAEs, 
-and large language models alike.
-
-### Research Questions
-
-1. Can membership inference attacks successfully exploit privacy leakage in a GAN?
-2. Does Differential Privacy eliminate this leakage, and at what cost?
-3. How does the privacy-utility tradeoff manifest in practice?
+![Comparison](outputs/comparison.png)
 
 ---
+
+## Project Structure
+
+├── train_gan.py              # Train baseline GAN on MNIST
+├── membership_inference.py   # Attack baseline GAN
+├── train_gan_dp.py           # Train GAN with DP-SGD defense
+├── membership_inference_dp.py # Attack DP-GAN
+├── compare_results.py        # Generate comparison figures
+└── outputs/                  # Saved models and figures
+
+## Setup
+
+```bash
+python3 -m venv research-env
+source research-env/bin/activate
+pip install torch torchvision opacus matplotlib
+```
+
+## Run
+
+```bash
+# Train and attack baseline GAN
+python train_gan.py
+python membership_inference.py
+
+# Train and attack DP-GAN
+python train_gan_dp.py
+python membership_inference_dp.py
+
+# Generate comparison figures
+python compare_results.py
+```
+
+---
+
+*Inspired by research on privacy in generative AI: see paper.tex for full write-up.*
